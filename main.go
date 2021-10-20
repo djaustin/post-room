@@ -22,7 +22,7 @@ type Task struct {
 }
 
 type AppOptions struct {
-	SMTPUsername, SMTPPassword, SMTPHost, SMTPPort, SenderAddress string
+	SMTPUsername, SMTPPassword, SMTPHost, SMTPPort, SenderAddress, RedisAddress, RedisKey string
 }
 
 const (
@@ -31,6 +31,8 @@ const (
 	smtpHostKey      = "SMTP_HOST"
 	smtpPortKey      = "SMTP_PORT"
 	senderAddressKey = "SENDER_ADDRESS"
+	redisAddressKey  = "REDIS_ADDRESS"
+	redisKeyKey      = "REDIS_KEY"
 )
 
 func main() {
@@ -39,11 +41,12 @@ func main() {
 		fmt.Println(err)
 		return
 	}
+	printDetails(options)
 
 	mailAuth := smtp.PlainAuth("", options.SMTPUsername, options.SMTPPassword, options.SMTPHost)
 
 	rdb := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
+		Addr: options.RedisAddress,
 	})
 	defer rdb.Close()
 
@@ -55,7 +58,7 @@ func main() {
 			if err != nil {
 				fmt.Println("pop", err)
 			}
-			fmt.Println("Handling task...")
+			fmt.Println("Task received. Processing...")
 			wg.Add(1)
 			taskBody := res[1]
 			task := Task{}
@@ -70,20 +73,26 @@ func main() {
 
 	sigchan := make(chan os.Signal, 1)
 	signal.Notify(sigchan, os.Interrupt)
+	fmt.Printf("Listening for tasks on list '%s' at %s\n", options.RedisKey, options.RedisAddress)
 	<-sigchan
 	fmt.Println("Waiting for in-progress tasks to finish...")
 	wg.Wait()
 	fmt.Println("Tasks finished. Exiting...")
 }
 
+func printDetails(options AppOptions) {
+	fmt.Printf("\n=========\n"+"Post Room\n"+"=========\n"+"Redis Server:\t%s\n"+"Redis List:\t%s\n"+"Mail Server:\t%s:%s\n\n", options.RedisAddress, options.RedisKey, options.SMTPHost, options.SMTPPort)
+}
+
 func sendMail(wg *sync.WaitGroup, options AppOptions, auth smtp.Auth, mail Task) {
+	defer wg.Done()
 	const messageTemplate = "Content-Type: text/html; charset=\"UTF-8\";\r\n" +
 		"To: %s\r\n" +
 		"From: %s\r\n" +
 		"Subject: %s\r\n\r\n%s"
-	fmt.Println("Sending email...")
 	message := []byte(fmt.Sprintf(messageTemplate, strings.Join(mail.Recipients, ", "), options.SenderAddress, mail.Subject, mail.Message))
 
+	fmt.Printf("Sending email to SMTP server...\n")
 	err := smtp.SendMail(fmt.Sprintf("%s:%s", options.SMTPHost, options.SMTPPort),
 		auth,
 		options.SenderAddress,
@@ -93,11 +102,9 @@ func sendMail(wg *sync.WaitGroup, options AppOptions, auth smtp.Auth, mail Task)
 
 	if err != nil {
 		fmt.Println("SMTP ERROR", err)
-		wg.Done()
 		return
 	}
-	fmt.Println("Sent!")
-	wg.Done()
+	fmt.Println("Email sent successfully")
 
 }
 
@@ -133,5 +140,19 @@ func validateEnvironment() (AppOptions, error) {
 		return options, fmt.Errorf(errorTemplate, senderAddressKey)
 	}
 	options.SenderAddress = address
+
+	redisAddress, ok := os.LookupEnv(redisAddressKey)
+	if !ok {
+		return options, fmt.Errorf(errorTemplate, redisAddressKey)
+	}
+	options.RedisAddress = redisAddress
+
+	redisKey, ok := os.LookupEnv(redisKeyKey)
+	if !ok {
+		options.RedisKey = "tasks"
+	} else {
+
+		options.RedisKey = redisKey
+	}
 	return options, nil
 }
