@@ -1,4 +1,4 @@
-module github.com/djaustin/go-redis
+module github.com/djaustin/post-room
 
 go 1.16
 

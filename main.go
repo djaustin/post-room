@@ -22,7 +22,7 @@ type Task struct {
 }
 
 type AppOptions struct {
-	smtpUsername, smtpPassword, smtpHost, smtpPort, senderAddress string
+	SMTPUsername, SMTPPassword, SMTPHost, SMTPPort, SenderAddress string
 }
 
 const (
@@ -40,7 +40,7 @@ func main() {
 		return
 	}
 
-	mailAuth := smtp.PlainAuth("", options.smtpUsername, options.smtpPassword, options.smtpHost)
+	mailAuth := smtp.PlainAuth("", options.SMTPUsername, options.SMTPPassword, options.SMTPHost)
 
 	rdb := redis.NewClient(&redis.Options{
 		Addr: "localhost:6379",
@@ -82,11 +82,11 @@ func sendMail(wg *sync.WaitGroup, options AppOptions, auth smtp.Auth, mail Task)
 		"From: %s\r\n" +
 		"Subject: %s\r\n\r\n%s"
 	fmt.Println("Sending email...")
-	message := []byte(fmt.Sprintf(messageTemplate, strings.Join(mail.Recipients, ", "), options.senderAddress, mail.Subject, mail.Message))
+	message := []byte(fmt.Sprintf(messageTemplate, strings.Join(mail.Recipients, ", "), options.SenderAddress, mail.Subject, mail.Message))
 
-	err := smtp.SendMail(fmt.Sprintf("%s:%s", options.smtpHost, options.smtpPort),
+	err := smtp.SendMail(fmt.Sprintf("%s:%s", options.SMTPHost, options.SMTPPort),
 		auth,
-		options.senderAddress,
+		options.SenderAddress,
 		mail.Recipients,
 		message,
 	)
@@ -102,35 +102,36 @@ func sendMail(wg *sync.WaitGroup, options AppOptions, auth smtp.Auth, mail Task)
 }
 
 func validateEnvironment() (AppOptions, error) {
+	const errorTemplate = "no ENV value provided for %s"
 	options := AppOptions{}
 	username, ok := os.LookupEnv(smtpUsernameKey)
 	if !ok {
-		return options, fmt.Errorf("no ENV value provided for %s", smtpUsernameKey)
+		return options, fmt.Errorf(errorTemplate, smtpUsernameKey)
 	}
-	options.smtpUsername = username
+	options.SMTPUsername = username
 
 	password, ok := os.LookupEnv(smtpPasswordKey)
 	if !ok {
-		return options, fmt.Errorf("no ENV value provided for %s", smtpPasswordKey)
+		return options, fmt.Errorf(errorTemplate, smtpPasswordKey)
 	}
-	options.smtpPassword = password
+	options.SMTPPassword = password
 
 	host, ok := os.LookupEnv(smtpHostKey)
 	if !ok {
-		return options, fmt.Errorf("no ENV value provided for %s", smtpHostKey)
+		return options, fmt.Errorf(errorTemplate, smtpHostKey)
 	}
-	options.smtpHost = host
+	options.SMTPHost = host
 
 	port, ok := os.LookupEnv(smtpPortKey)
 	if !ok {
-		return options, fmt.Errorf("no ENV value provided for %s", smtpPortKey)
+		return options, fmt.Errorf(errorTemplate, smtpPortKey)
 	}
-	options.smtpPort = port
+	options.SMTPPort = port
 
 	address, ok := os.LookupEnv(senderAddressKey)
 	if !ok {
-		return options, fmt.Errorf("no ENV value provided for %s", senderAddressKey)
+		return options, fmt.Errorf(errorTemplate, senderAddressKey)
 	}
-	options.senderAddress = address
+	options.SenderAddress = address
 	return options, nil
 }
