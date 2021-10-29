@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/smtp"
 	"os"
 	"os/signal"
@@ -15,7 +16,7 @@ import (
 
 var ctx = context.Background()
 
-type Task struct {
+type Mail struct {
 	Subject    string   `json:"subject"`
 	Message    string   `json:"message"`
 	Recipients []string `json:"recipients"`
@@ -35,20 +36,51 @@ const (
 	redisKeyKey      = "REDIS_KEY"
 )
 
+type Mailer struct {
+	template, senderAddress, host, port string
+	auth                                smtp.Auth
+}
+
+func (m Mailer) sendMail(mail Mail) {
+	message := []byte(fmt.Sprintf(m.template, strings.Join(mail.Recipients, ", "), m.senderAddress, mail.Subject, mail.Message))
+
+	log.Printf("sending email to SMTP server...\n")
+	err := smtp.SendMail(fmt.Sprintf("%s:%s", m.host, m.port),
+		m.auth,
+		m.senderAddress,
+		mail.Recipients,
+		message,
+	)
+
+	if err != nil {
+		log.Print("error sending email to server: ", err)
+		return
+	}
+	log.Print("email sent successfully")
+}
+
 func main() {
 	options, err := validateEnvironment()
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		return
 	}
 	printDetails(options)
 
-	mailAuth := smtp.PlainAuth("", options.SMTPUsername, options.SMTPPassword, options.SMTPHost)
+	mailer := Mailer{
+		template: "Content-Type: text/html; charset=\"UTF-8\";\r\n" +
+			"To: %s\r\n" +
+			"From: %s\r\n" +
+			"Subject: %s\r\n\r\n%s",
+		senderAddress: options.SenderAddress,
+		host:          options.SMTPHost,
+		port:          options.SMTPPort,
+		auth:          smtp.PlainAuth("", options.SMTPUsername, options.SMTPPassword, options.SMTPHost),
+	}
 
 	rdb := redis.NewClient(&redis.Options{
 		Addr: options.RedisAddress,
 	})
-	defer rdb.Close()
 
 	wg := sync.WaitGroup{}
 
@@ -56,56 +88,36 @@ func main() {
 		for {
 			res, err := rdb.BRPop(ctx, 0, "tasks").Result()
 			if err != nil {
-				fmt.Println("pop", err)
+				log.Fatalln("cannot pop from list:", err)
 			}
-			fmt.Println("Task received. Processing...")
-			wg.Add(1)
+			log.Print("processing task from list...")
 			taskBody := res[1]
-			task := Task{}
+			task := Mail{}
 			err = json.Unmarshal([]byte(taskBody), &task)
 			if err != nil {
-				fmt.Println("unmarshal", err)
-				return
+				log.Print("error unmarshalling task data to JSON: ", err)
+				continue
 			}
-			go sendMail(&wg, options, mailAuth, task)
+			wg.Add(1)
+			go func() {
+				mailer.sendMail(task)
+				wg.Done()
+			}()
 		}
 	}()
 
 	sigchan := make(chan os.Signal, 1)
 	signal.Notify(sigchan, os.Interrupt)
-	fmt.Printf("Listening for tasks on list '%s' at %s\n", options.RedisKey, options.RedisAddress)
+	log.Printf("worker registered for tasks on list '%s' at %s\n", options.RedisKey, options.RedisAddress)
 	<-sigchan
-	fmt.Println("Waiting for in-progress tasks to finish...")
+	log.Print("waiting for in-progress tasks to finish...")
 	wg.Wait()
-	fmt.Println("Tasks finished. Exiting...")
+	log.Println("tasks finished")
+	log.Println("exiting...")
 }
 
 func printDetails(options AppOptions) {
 	fmt.Printf("\n=========\n"+"Post Room\n"+"=========\n"+"Redis Server:\t%s\n"+"Redis List:\t%s\n"+"Mail Server:\t%s:%s\n\n", options.RedisAddress, options.RedisKey, options.SMTPHost, options.SMTPPort)
-}
-
-func sendMail(wg *sync.WaitGroup, options AppOptions, auth smtp.Auth, mail Task) {
-	defer wg.Done()
-	const messageTemplate = "Content-Type: text/html; charset=\"UTF-8\";\r\n" +
-		"To: %s\r\n" +
-		"From: %s\r\n" +
-		"Subject: %s\r\n\r\n%s"
-	message := []byte(fmt.Sprintf(messageTemplate, strings.Join(mail.Recipients, ", "), options.SenderAddress, mail.Subject, mail.Message))
-
-	fmt.Printf("Sending email to SMTP server...\n")
-	err := smtp.SendMail(fmt.Sprintf("%s:%s", options.SMTPHost, options.SMTPPort),
-		auth,
-		options.SenderAddress,
-		mail.Recipients,
-		message,
-	)
-
-	if err != nil {
-		fmt.Println("SMTP ERROR", err)
-		return
-	}
-	fmt.Println("Email sent successfully")
-
 }
 
 func validateEnvironment() (AppOptions, error) {
