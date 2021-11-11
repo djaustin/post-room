@@ -69,31 +69,31 @@ func (m Mailer) sendMailUnauthenticated(mail Mail) error {
 	// Connect to the remote SMTP server.
 	c, err := smtp.Dial(fmt.Sprintf("%s:%s", m.host, m.port))
 	if err != nil {
-		return err
+		return fmt.Errorf("error connecting to remote SMTP host: %w", err)
 	}
 	defer c.Quit()
 
 	// Set the sender and recipient first
 	if err := c.Mail(m.senderAddress); err != nil {
-		return err
+		return fmt.Errorf("error setting sender address: %w", err)
 	}
 	if err := c.Rcpt(mail.Recipients[0]); err != nil {
-		return err
+		return fmt.Errorf("error setting recipient address: %w", err)
 	}
 
 	// Send the email body.
 	wc, err := c.Data()
 	if err != nil {
-		return err
+		return fmt.Errorf("error issuing DATA command to remote SMTP host: %w", err)
 	}
 
 	_, err = fmt.Fprintf(wc, mail.Message)
 	if err != nil {
-		return err
+		return fmt.Errorf("error writing message body: %w", err)
 	}
 	err = wc.Close()
 	if err != nil {
-		return err
+		return fmt.Errorf("error closing message body writer: %w", err)
 	}
 	return nil
 }
