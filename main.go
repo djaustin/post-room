@@ -42,14 +42,20 @@ type Mailer struct {
 }
 
 func (m Mailer) sendMail(mail Mail) {
-	message := []byte(fmt.Sprintf(m.template, strings.Join(mail.Recipients, ", "), m.senderAddress, mail.Subject, mail.Message))
-
+	mail.Message = fmt.Sprintf(m.template, strings.Join(mail.Recipients, ", "), m.senderAddress, mail.Subject, mail.Message)
+	if m.auth == nil {
+		err := m.sendMailUnauthenticated(mail)
+		if err != nil {
+			log.Printf("error sending without authentication: %v", err)
+			return
+		}
+	}
 	log.Printf("sending email to SMTP server...\n")
 	err := smtp.SendMail(fmt.Sprintf("%s:%s", m.host, m.port),
 		m.auth,
 		m.senderAddress,
 		mail.Recipients,
-		message,
+		[]byte(mail.Message),
 	)
 
 	if err != nil {
@@ -57,6 +63,39 @@ func (m Mailer) sendMail(mail Mail) {
 		return
 	}
 	log.Print("email sent successfully")
+}
+
+func (m Mailer) sendMailUnauthenticated(mail Mail) error {
+	// Connect to the remote SMTP server.
+	c, err := smtp.Dial(fmt.Sprintf("%s:%s", m.host, m.port))
+	if err != nil {
+		return err
+	}
+	defer c.Quit()
+
+	// Set the sender and recipient first
+	if err := c.Mail(m.senderAddress); err != nil {
+		return err
+	}
+	if err := c.Rcpt(mail.Recipients[0]); err != nil {
+		return err
+	}
+
+	// Send the email body.
+	wc, err := c.Data()
+	if err != nil {
+		return err
+	}
+
+	_, err = fmt.Fprintf(wc, mail.Message)
+	if err != nil {
+		return err
+	}
+	err = wc.Close()
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func main() {
@@ -75,7 +114,12 @@ func main() {
 		senderAddress: options.SenderAddress,
 		host:          options.SMTPHost,
 		port:          options.SMTPPort,
-		auth:          smtp.PlainAuth("", options.SMTPUsername, options.SMTPPassword, options.SMTPHost),
+	}
+
+	if len(options.SMTPUsername) > 0 && len(options.SMTPPassword) > 0 {
+		mailer.auth = smtp.PlainAuth("", options.SMTPUsername, options.SMTPPassword, options.SMTPHost)
+	} else {
+		log.Println("[WARNING] No auth details provided, using unauthenticated SMTP")
 	}
 
 	rdb := redis.NewClient(&redis.Options{
@@ -123,16 +167,10 @@ func printDetails(options AppOptions) {
 func validateEnvironment() (AppOptions, error) {
 	const errorTemplate = "no ENV value provided for %s"
 	options := AppOptions{}
-	username, ok := os.LookupEnv(smtpUsernameKey)
-	if !ok {
-		return options, fmt.Errorf(errorTemplate, smtpUsernameKey)
-	}
+	username, _ := os.LookupEnv(smtpUsernameKey)
 	options.SMTPUsername = username
 
-	password, ok := os.LookupEnv(smtpPasswordKey)
-	if !ok {
-		return options, fmt.Errorf(errorTemplate, smtpPasswordKey)
-	}
+	password, _ := os.LookupEnv(smtpPasswordKey)
 	options.SMTPPassword = password
 
 	host, ok := os.LookupEnv(smtpHostKey)
