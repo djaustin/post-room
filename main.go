@@ -47,8 +47,8 @@ func (m Mailer) sendMail(mail Mail) {
 		err := m.sendMailUnauthenticated(mail)
 		if err != nil {
 			log.Printf("error sending without authentication: %v", err)
-			return
 		}
+		return
 	}
 	log.Printf("sending email to SMTP server...\n")
 	err := smtp.SendMail(fmt.Sprintf("%s:%s", m.host, m.port),
